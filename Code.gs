@@ -2,17 +2,6 @@
 // https://github.com/ahochsteger/gmail2gdrive
 
 /**
- * Returns the label with the given name or creates it if not existing.
- */
-function getOrCreateLabel(labelName) {
-  var label = GmailApp.getUserLabelByName(labelName);
-  if (label == null) {
-    label = GmailApp.createLabel(labelName);
-  }
-  return label;
-}
-
-/**
  * Recursive function to create and return a complete folder path.
  */
 function getOrCreateSubFolder(baseFolder,folderArray) {
@@ -71,39 +60,84 @@ function getOrCreateFolder(folderName) {
 }
 
 /**
+ * Sanitize filenames
+ */
+function getSanitizedFilename(name) {
+  return name.replace(/[^a-zA-Z0-9 .@]/g, "");
+}
+
+/**
+ * Unzip file
+ */
+function unZip(blob) {
+  blob.setContentType("application/zip");
+  var unzipped = Utilities.unzip(blob);
+  var filename = unzipped[0].getName();
+  return {
+    filename: filename,
+    content: unzipped[0],
+  };
+}
+
+/**
  * Processes a message
  */
 function processMessage(message, rule, config) {
-  Logger.log("INFO:       Processing message: "+message.getSubject() + " (" + message.getId() + ")");
+  Logger.log("INFO:       Processing message: " + message.getSubject() + " (" + message.getId()  + ") from " + message.getFrom());
   var messageDate = message.getDate();
+
+  // Adjust message date by optional offset in days
+  if (typeof rule.dateOffset !== 'undefined') {
+    messageDate.setDate( messageDate.getDate() - rule.dateOffset );
+  }
+
   var attachments = message.getAttachments();
   for (var attIdx=0; attIdx<attachments.length; attIdx++) {
     var attachment = attachments[attIdx];
-    Logger.log("INFO:         Processing attachment: "+attachment.getName());
-    var match = true;
-    if (rule.filenameFromRegexp) {
-    var re = new RegExp(rule.filenameFromRegexp);
-      match = (attachment.getName()).match(re);
-    }
-    if (!match) {
-      Logger.log("INFO:           Rejecting file '" + attachment.getName() + " not matching" + rule.filenameFromRegexp);
-      continue;
-    }
+
     try {
-      var folder = getOrCreateFolder(Utilities.formatDate(messageDate, config.timezone, rule.folder));
+      var folder = getOrCreateFolder(Utilities.formatDate(messageDate, config.timezone, rule.driveFolder));
+      var attachmentFilename = attachment.getName();
+      var driveFilename = attachmentFilename;
+
+      Logger.log("INFO:         Processing attachment: " + attachmentFilename);
+
+      // Stop processing if `filenameFilter` is defined and its regex doesn't match attachment name
+      if ( (rule.filenameFilter) && (!attachmentFilename.match(RegExp(rule.filenameFilter))) ) {
+        Logger.log("INFO:           Rejecting file '" + attachmentFilename + "' not matching " + rule.filenameFilter);
+        continue;
+      }
+
+      // Unzip if defined
+      if (rule.unzip == true) {
+        var unzipped = unZip(attachment);
+        attachment = unzipped.content;
+        driveFilename = unzipped.filename;
+        Logger.log("INFO:           Unzipping file '" + attachmentFilename + "' as '" + driveFilename + "'");
+      }
+
+      // Set new filename if `driveFilename` is defined
+      if (rule.driveFilename) {
+        driveFilename = Utilities.formatDate(messageDate, config.timezone, rule.driveFilename
+                                             .replace('%s',getSanitizedFilename(message.getSubject()))
+                                             .replace('%f',getSanitizedFilename(message.getFrom()))
+                                             .replace('%n',attachmentFilename));
+      }
+
+      // Detect if file already exists, if so, append index
+      var index = 0;
+      var indexedDriveFilename = driveFilename;
+      while (folder.getFilesByName(indexedDriveFilename).hasNext()) {
+        indexedDriveFilename = driveFilename.replace(/\.(?=[^.]*$)/, '-' + ++index + '.');
+      }
+      driveFilename = indexedDriveFilename;
+
+      // Create file
       var file = folder.createFile(attachment);
-      var filename = file.getName();
-      if (rule.filenameFrom && rule.filenameTo && rule.filenameFrom == file.getName()) {
-        filename = Utilities.formatDate(messageDate, config.timezone, rule.filenameTo.replace('%s',message.getSubject()));
-        Logger.log("INFO:           Renaming matched file '" + file.getName() + "' -> '" + filename + "'");
-        file.setName(filename);
-      }
-      else if (rule.filenameTo) {
-        filename = Utilities.formatDate(messageDate, config.timezone, rule.filenameTo.replace('%s',message.getSubject()));
-        Logger.log("INFO:           Renaming '" + file.getName() + "' -> '" + filename + "'");
-        file.setName(filename);
-      }
+      file.setName(driveFilename);
       file.setDescription("Mail title: " + message.getSubject() + "\nMail date: " + message.getDate() + "\nMail link: https://mail.google.com/mail/u/0/#inbox/" + message.getId());
+      Logger.log("INFO:           Attachment '" + attachmentFilename + "' saved as '" + driveFilename + "'");
+
       Utilities.sleep(config.sleepTime);
     } catch (e) {
       Logger.log(e);
@@ -132,11 +166,11 @@ function processThreadToHtml(thread) {
 }
 
 /**
-* Generate a PDF document for the whole thread using HTML from .
+* Generate a PDF document for the whole thread using HTML form.
  */
 function processThreadToPdf(thread, rule) {
   Logger.log("INFO: Saving PDF copy of thread '" + thread.getFirstMessageSubject() + "'");
-  var folder = getOrCreateFolder(rule.folder);
+  var folder = getOrCreateFolder(rule.driveFolder);
   var html = processThreadToHtml(thread);
   var blob = Utilities.newBlob(html, 'text/html');
   var pdf = folder.createFile(blob.getAs('application/pdf')).setName(thread.getFirstMessageSubject() + ".pdf");
@@ -150,7 +184,7 @@ function processThreadToPdf(thread, rule) {
 function Gmail2GDrive() {
   if (!GmailApp) return; // Skip script execution if GMail is currently not available (yes this happens from time to time and triggers spam emails!)
   var config = getGmail2GDriveConfig();
-  var label = getOrCreateLabel(config.processedLabel);
+  var label = GmailApp.createLabel(config.processedLabel);
   var end, start, runTime;
   start = new Date(); // Start timer
 
@@ -171,12 +205,12 @@ function Gmail2GDrive() {
 
     // Process all threads matching the search expression:
     var threads = GmailApp.search(gSearchExp);
-    Logger.log("INFO:   Processing rule: "+gSearchExp);
+    Logger.log("INFO:   Processing rule: " + gSearchExp);
     for (var threadIdx=0; threadIdx<threads.length; threadIdx++) {
       var thread = threads[threadIdx];
       end = new Date();
       runTime = (end.getTime() - start.getTime())/1000;
-      Logger.log("INFO:     Processing thread: "+thread.getFirstMessageSubject() + " (runtime: " + runTime + "s/" + config.maxRuntime + "s)");
+      Logger.log("INFO:     Processing thread: " + thread.getFirstMessageSubject() + " (runtime: " + runTime + "s/" + config.maxRuntime + "s)");
       if (runTime >= config.maxRuntime) {
         Logger.log("WARNING: Self terminating script after " + runTime + "s");
         return;

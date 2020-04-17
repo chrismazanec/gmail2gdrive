@@ -20,38 +20,38 @@ function getGmail2GDriveConfig() {
     "rules": [
       { // Store all attachments sent to my.name+scans@gmail.com to the folder "Scans"
         "filter": "has:attachment to:my.name+scans@gmail.com",
-        "folder": "'Scans'-yyyy-MM-dd"
+        "driveFolder": "'Scans'-yyyy-MM-dd"
       },
       { // Store all attachments from example1@example.com to the folder "Examples/example1"
         "filter": "has:attachment from:example1@example.com",
-        "folder": "'Examples/example1'"
+        "driveFolder": "'Examples/example1'"
       },
       { // Store all pdf attachments from example2@example.com to the folder "Examples/example2"
         "filter": "has:attachment from:example2@example.com",
-        "folder": "'Examples/example2'",
-        "filenameFromRegexp": ".*\.pdf$"
+        "driveFolder": "'Examples/example2'",
+        "filenameFilterRegexp": ".*\.pdf$"
       },
       { // Store all attachments from example3a@example.com OR from:example3b@example.com
         // to the folder "Examples/example3ab" while renaming all attachments to the pattern
-        // defined in 'filenameTo' and archive the thread.
+        // defined in 'driveFilename' and archive the thread.
         "filter": "has:attachment (from:example3a@example.com OR from:example3b@example.com)",
-        "folder": "'Examples/example3ab'",
-        "filenameTo": "'file-'yyyy-MM-dd-'%s.txt'",
+        "driveFolder": "'Examples/example3ab'",
+        "driveFilename": "'file-'yyyy-MM-dd-'%s.txt'",
         "archive": true
       },
       {
         // Store threads marked with label "PDF" in the folder "PDF Emails" als PDF document.
         "filter": "label:PDF",
         "saveThreadPDF": true,
-        "folder": "PDF Emails"
+        "driveFolder": "PDF Emails"
       },
       { // Store all attachments named "file.txt" from example4@example.com to the
         // folder "Examples/example4" and rename the attachment to the pattern
-        // defined in 'filenameTo' and archive the thread.
+        // defined in 'driveFilename' and archive the thread.
         "filter": "has:attachment from:example4@example.com",
-        "folder": "'Examples/example4'",
-        "filenameFrom": "file.txt",
-        "filenameTo": "'file-'yyyy-MM-dd-'%s.txt'"
+        "driveFolder": "'Examples/example4'",
+        "filenameFilter": "file.txt",
+        "driveFilename": "'file-'yyyy-MM-dd-'%s.txt'"
       }
     ]
   };
